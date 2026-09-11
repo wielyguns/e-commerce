@@ -1,33 +1,34 @@
 # JPBook — E-commerce Toko Buku
 
-Single-seller B2C bookstore built as a **stateless Laravel monolith**, designed to scale
-horizontally behind a load balancer (~10k req/min with flash-sale headroom).
+Toko buku online B2C dengan satu penjual, dibangun sebagai **monolit Laravel stateless**
+yang siap di-scale horizontal di belakang load balancer (~10 ribu request/menit, dengan
+ruang cadangan untuk flash sale).
 
 - **Backend:** PHP 8.3 · Laravel 13 · Laravel Octane (FrankenPHP)
 - **Frontend:** Inertia 2 · Vue 3 · Vite · Tailwind CSS 4 · PrimeVue 4
 - **Data:** PostgreSQL (primary + read replica) · Redis (cache/session/queue) · Meilisearch
-- **Ops:** Laravel Horizon (queues) · Laravel Scout (search)
+- **Ops:** Laravel Horizon (queue) · Laravel Scout (pencarian)
 
-Everything runs in Docker. The app holds **no local state** — sessions, cache and queues
-live in Redis; search lives in Meilisearch; data in Postgres.
+Semuanya berjalan di Docker. Aplikasi **tidak menyimpan state lokal**: session, cache, dan
+queue ada di Redis; pencarian di Meilisearch; data di Postgres.
 
 ---
 
-## Installation
+## Instalasi
 
-### 1. Requirements
+### 1. Kebutuhan
 
 - [Git](https://git-scm.com/downloads)
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or
-  Docker Engine + the Docker Compose v2 plugin (Linux)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS), atau
+  Docker Engine + plugin Docker Compose v2 (Linux)
 
-PHP, Composer, Node and Postgres are **not** needed on your machine — they all run
-inside Docker.
+PHP, Composer, Node, dan Postgres **tidak** perlu diinstal di komputer. Semuanya
+berjalan di dalam Docker.
 
-> **Windows:** use WSL2 and clone the project inside the Linux filesystem
-> (e.g. `~/projects`), not under `C:\`. Bind mounts from `C:\` are very slow.
+> **Windows:** gunakan WSL2 dan clone project di dalam filesystem Linux
+> (misalnya `~/projects`), jangan di `C:\`. Bind mount dari `C:\` sangat lambat.
 
-### 2. Clone and start
+### 2. Clone dan jalankan
 
 ```bash
 git clone https://github.com/wielyguns/e-commerce.git
@@ -35,97 +36,100 @@ cd e-commerce
 docker compose up -d --build
 ```
 
-No manual setup is needed. The one-shot `setup` service (`docker/setup.sh`) runs on
-every `up`. It:
+Tidak perlu setup manual. Service `setup` (`docker/setup.sh`) berjalan sekali setiap
+kali `up`, lalu berhenti. Tugasnya:
 
-1. creates `.env` from `.env.example`,
-2. runs `composer install` and `npm ci`,
-3. generates `APP_KEY`,
-4. applies database migrations.
+1. membuat `.env` dari `.env.example`,
+2. menjalankan `composer install` dan `npm ci`,
+3. membuat `APP_KEY`,
+4. menjalankan migrasi database.
 
-The app, queue worker and Vite start only after it succeeds. The first run takes a
-few minutes while dependencies download. To follow along:
+App, queue worker, dan Vite baru start setelah `setup` selesai tanpa error. Proses
+pertama butuh beberapa menit untuk mengunduh dependency. Untuk memantaunya:
 
 ```bash
-docker compose logs -f setup      # ends with "[setup] done"
+docker compose logs -f setup      # selesai kalau muncul "[setup] done"
 ```
 
-### 3. Open the app
+### 3. Buka aplikasinya
 
-| URL                              | What                                   |
-| -------------------------------- | -------------------------------------- |
-| http://localhost:8089            | Storefront (Inertia/Vue)               |
-| http://localhost:8089/admin      | Admin panel (role-protected in Phase E)|
-| http://localhost:8089/horizon    | Horizon queue dashboard                |
+| URL                              | Isi                                            |
+| -------------------------------- | ---------------------------------------------- |
+| http://localhost:8089            | Halaman toko (Inertia/Vue)                     |
+| http://localhost:8089/admin      | Panel admin (proteksi role menyusul di Fase E) |
+| http://localhost:8089/horizon    | Dashboard queue Horizon                        |
 
-### Updating
+### Update
 
 ```bash
 git pull
-docker compose up -d --build      # re-syncs dependencies and runs new migrations
+docker compose up -d --build      # sinkronkan dependency dan jalankan migrasi baru
 ```
 
-### Stopping / uninstalling
+### Menghentikan / menghapus
 
 ```bash
-docker compose down               # stop, keep the database
-docker compose down -v            # stop and DELETE all data (database, Redis, search index)
+docker compose down               # hentikan, database tetap tersimpan
+docker compose down -v            # hentikan dan HAPUS semua data (database, Redis, indeks pencarian)
 ```
 
 ### Troubleshooting
 
-- **Port `8089` already in use:** set another port in `.env`, e.g. `APP_PORT=8090`
-  (`APP_URL` follows it automatically), then `docker compose up -d`. `.env` is
-  created on the first run; before that, copy it from `.env.example`.
-- **Port `5173` already in use:** another Vite dev server is running on your
-  machine. Stop it, then `docker compose up -d`.
-- **App does not start:** check `docker compose logs setup`. The other services
-  only start after it finishes successfully.
-- **Page loads without styling:** the `vite` container serves the front-end assets.
-  Check that it is running with `docker compose ps`.
+- **Port `8089` sudah dipakai:** atur port lain di `.env`, misalnya `APP_PORT=8090`
+  (`APP_URL` otomatis mengikuti), lalu jalankan `docker compose up -d`. File `.env`
+  dibuat saat pertama kali `up`; kalau belum ada, salin dulu dari `.env.example`.
+- **Port `5173` sudah dipakai:** ada Vite dev server lain yang sedang jalan di komputer.
+  Hentikan dulu, lalu jalankan `docker compose up -d`.
+- **Aplikasi tidak mau start:** cek `docker compose logs setup`. Service lain baru
+  start setelah `setup` selesai tanpa error.
+- **Halaman tampil tanpa styling:** aset front-end dilayani oleh container `vite`.
+  Pastikan container itu jalan dengan `docker compose ps`.
 
-## Services (docker-compose)
+## Service (docker-compose)
 
-| Service         | Role                          | Host port |
-| --------------- | ----------------------------- | --------- |
-| `setup`         | One-shot bootstrap, then exits| —         |
-| `app`           | Octane / FrankenPHP web server| 8089→8000 |
-| `horizon`       | Queue worker (Redis)          | —         |
-| `vite`          | Vite dev server (HMR)         | 5173      |
-| `pgsql`         | Postgres **primary** (writes) | internal  |
-| `pgsql-replica` | Postgres **replica** (reads)  | internal  |
-| `redis`         | Cache · session · queue       | internal  |
-| `meilisearch`   | Product search                | internal  |
+| Service         | Fungsi                                | Port host |
+| --------------- | ------------------------------------- | --------- |
+| `setup`         | Bootstrap sekali jalan, lalu berhenti | —         |
+| `app`           | Web server Octane / FrankenPHP        | 8089→8000 |
+| `horizon`       | Queue worker (Redis)                  | —         |
+| `vite`          | Vite dev server (HMR)                 | 5173      |
+| `pgsql`         | Postgres **primary** (tulis)          | internal  |
+| `pgsql-replica` | Postgres **replica** (baca)           | internal  |
+| `redis`         | Cache · session · queue               | internal  |
+| `meilisearch`   | Pencarian produk                      | internal  |
 
-Only the ports the browser needs are published, so the stack never clashes with a
-Postgres/Redis already running on the host.
+Hanya port yang dibutuhkan browser yang dibuka ke host, jadi stack ini tidak bentrok
+dengan Postgres/Redis lain yang sudah jalan di komputer.
 
-## Architecture notes
+## Catatan arsitektur
 
-- **Stateless:** `SESSION_DRIVER`, `CACHE_STORE`, `QUEUE_CONNECTION` all = `redis`.
-- **Read/write split:** `config/database.php` routes `SELECT`s to the replica and writes
-  to the primary (`sticky` on, so same-request reads see fresh writes). The replica uses
-  real Postgres streaming replication (see `docker/postgres/`).
-- **Heavy work is queued** (Horizon) — mail, webhooks, search indexing — so user requests
-  stay fast. `SCOUT_QUEUE=true` indexes products off the request path.
-- **Cache-friendly catalog:** public pages avoid per-user content (ready for CDN in front).
-- **Third-party integrations use the adapter pattern** (`app/Contracts` + `app/Services`),
-  credentials via `.env` only, sandbox by default — Midtrans (payment) and Biteship
-  (shipping) land in Phases C/D.
+- **Stateless:** `SESSION_DRIVER`, `CACHE_STORE`, dan `QUEUE_CONNECTION` semuanya `redis`.
+- **Pemisahan baca/tulis:** `config/database.php` mengarahkan query `SELECT` ke replica
+  dan query tulis ke primary (`sticky` aktif, jadi data yang baru ditulis langsung
+  terbaca di request yang sama). Replica memakai streaming replication Postgres
+  sungguhan (lihat `docker/postgres/`).
+- **Pekerjaan berat masuk queue** (Horizon), seperti email, webhook, dan indexing
+  pencarian, supaya request user tetap cepat. `SCOUT_QUEUE=true` membuat indexing
+  produk tidak memperlambat request.
+- **Katalog ramah cache:** halaman publik tidak berisi konten per-user (siap dipasang
+  CDN di depannya).
+- **Integrasi pihak ketiga memakai adapter pattern** (`app/Contracts` + `app/Services`).
+  Kredensial hanya lewat `.env` dan default-nya mode sandbox. Midtrans (pembayaran)
+  dan Biteship (pengiriman) menyusul di Fase C/D.
 
-## Common commands
+## Perintah yang sering dipakai
 
 ```bash
-docker compose logs -f app          # tail Octane logs
-docker compose exec app bash        # shell into the app container
-docker compose exec app php artisan ...   # any artisan command
-docker compose exec pgsql psql -U jpbook jpbook   # Postgres shell
-docker compose logs setup           # see what the bootstrap did
-docker compose restart app          # reload after config changes
-docker compose down                 # stop (keeps data volumes)
+docker compose logs -f app          # lihat log Octane
+docker compose exec app bash        # masuk ke shell container app
+docker compose exec app php artisan ...   # jalankan perintah artisan
+docker compose exec pgsql psql -U jpbook jpbook   # shell Postgres
+docker compose logs setup           # lihat apa saja yang dikerjakan setup
+docker compose restart app          # reload setelah mengubah konfigurasi
+docker compose down                 # hentikan (data tetap tersimpan)
 ```
 
-## Build status
+## Status pengembangan
 
-- **Phase A — Foundation:** ✅ done (this checkpoint)
-- Phase B — Catalog · Phase C — Cart & checkout · Phase D — Payment · Phase E — Account & admin
+- **Fase A — Fondasi:** ✅ selesai (checkpoint ini)
+- Fase B — Katalog · Fase C — Keranjang & checkout · Fase D — Pembayaran · Fase E — Akun & admin
