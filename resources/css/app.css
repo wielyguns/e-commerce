@@ -1,0 +1,22 @@
+@import 'tailwindcss';
+
+/* PrimeVue + Tailwind interop (utilities that map to PrimeVue design tokens). */
+@plugin 'tailwindcss-primeui';
+
+/* Scan Blade + Vue sources for class usage. */
+@source '../views';
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source './**/*.vue';
+
+/* Dark mode driven by a `.dark` class on <html> (see PrimeVue darkModeSelector). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+html {
+    scroll-behavior: smooth;
+}

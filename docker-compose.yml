@@ -1,0 +1,145 @@
+# JPBook local stack — fully stateless app (state lives in Postgres/Redis/Meilisearch).
+#
+#   docker compose build           build the app image
+#   docker compose up -d           start the whole stack
+#   docker compose exec app bash   shell into the app container
+#
+name: jpbook
+
+services:
+  # --- Application (Laravel Octane / FrankenPHP) ------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: jpbook-app
+    restart: unless-stopped
+    command: php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8000 --workers=auto --max-requests=500 --watch
+    ports:
+      - "8088:8000"
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      pgsql:
+        condition: service_healthy
+      pgsql-replica:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+
+  # --- Queue worker (Horizon) -------------------------------------------------
+  horizon:
+    image: jpbook-app
+    restart: unless-stopped
+    command: php artisan horizon
+    # This container runs the queue worker, not the web server, so the
+    # FrankenPHP image's inherited healthcheck does not apply.
+    healthcheck:
+      disable: true
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      app:
+        condition: service_started
+      redis:
+        condition: service_healthy
+
+  # --- Vite dev server (HMR for Inertia/Vue) ----------------------------------
+  vite:
+    image: jpbook-app
+    restart: unless-stopped
+    command: npm run dev -- --host 0.0.0.0
+    healthcheck:
+      disable: true
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+    env_file: .env
+
+  # --- Postgres PRIMARY (writes) ----------------------------------------------
+  pgsql:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    command: >
+      postgres
+      -c wal_level=replica
+      -c max_wal_senders=10
+      -c max_replication_slots=10
+      -c hot_standby=on
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-jpbook}
+      POSTGRES_USER: ${DB_USERNAME:-jpbook}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:-replicasecret}
+    volumes:
+      - pgsql-data:/var/lib/postgresql/data
+      - ./docker/postgres/primary-init.sh:/docker-entrypoint-initdb.d/10-primary-init.sh:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-jpbook} -d ${DB_DATABASE:-jpbook}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # --- Postgres REPLICA (reads) -----------------------------------------------
+  pgsql-replica:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/replica-entrypoint.sh"]
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-jpbook}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      REPLICATION_PASSWORD: ${DB_REPLICATION_PASSWORD:-replicasecret}
+      PRIMARY_HOST: pgsql
+    volumes:
+      - pgsql-replica-data:/var/lib/postgresql/data
+      - ./docker/postgres/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
+    # No host port: the app reaches the replica internally as pgsql-replica:5432.
+    depends_on:
+      pgsql:
+        condition: service_healthy
+
+  # --- Redis (cache / session / queue) ----------------------------------------
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Meilisearch (product search) -------------------------------------------
+  meilisearch:
+    image: getmeili/meilisearch:v1.16
+    restart: unless-stopped
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:-masterKeyChangeMe}
+      MEILI_ENV: ${MEILI_ENV:-development}
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meili-data:/meili_data
+    ports:
+      - "7700:7700"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgsql-data:
+  pgsql-replica-data:
+  redis-data:
+  meili-data:
