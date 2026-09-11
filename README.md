@@ -13,22 +13,44 @@ live in Redis; search lives in Meilisearch; data in Postgres.
 
 ---
 
-## Prerequisites
+## Installation
 
-- Docker + Docker Compose (the only host requirement)
+### 1. Requirements
 
-## Quick start
+- [Git](https://git-scm.com/downloads)
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/macOS) or
+  Docker Engine + the Docker Compose v2 plugin (Linux)
+
+PHP, Composer, Node and Postgres are **not** needed on your machine — they all run
+inside Docker.
+
+> **Windows:** use WSL2 and clone the project inside the Linux filesystem
+> (e.g. `~/projects`), not under `C:\`. Bind mounts from `C:\` are very slow.
+
+### 2. Clone and start
 
 ```bash
+git clone https://github.com/wielyguns/e-commerce.git
+cd e-commerce
 docker compose up -d --build
 ```
 
-That's it — also on a fresh clone. The one-shot `setup` service (`docker/setup.sh`)
-runs on every `up`: it creates `.env` from `.env.example`, runs `composer install` /
-`npm ci`, generates `APP_KEY` and applies migrations. The app, queue worker and Vite
-start only after it succeeds (first run takes a few minutes for dependencies).
+No manual setup is needed. The one-shot `setup` service (`docker/setup.sh`) runs on
+every `up`. It:
 
-Then open:
+1. creates `.env` from `.env.example`,
+2. runs `composer install` and `npm ci`,
+3. generates `APP_KEY`,
+4. applies database migrations.
+
+The app, queue worker and Vite start only after it succeeds. The first run takes a
+few minutes while dependencies download. To follow along:
+
+```bash
+docker compose logs -f setup      # ends with "[setup] done"
+```
+
+### 3. Open the app
 
 | URL                              | What                                   |
 | -------------------------------- | -------------------------------------- |
@@ -36,8 +58,31 @@ Then open:
 | http://localhost:8089/admin      | Admin panel (role-protected in Phase E)|
 | http://localhost:8089/horizon    | Horizon queue dashboard                |
 
-> Port taken? Set `APP_PORT` in `.env` (`APP_URL` follows it) and run
-> `docker compose up -d` again.
+### Updating
+
+```bash
+git pull
+docker compose up -d --build      # re-syncs dependencies and runs new migrations
+```
+
+### Stopping / uninstalling
+
+```bash
+docker compose down               # stop, keep the database
+docker compose down -v            # stop and DELETE all data (database, Redis, search index)
+```
+
+### Troubleshooting
+
+- **Port `8089` already in use:** set another port in `.env`, e.g. `APP_PORT=8090`
+  (`APP_URL` follows it automatically), then `docker compose up -d`. `.env` is
+  created on the first run; before that, copy it from `.env.example`.
+- **Port `5173` already in use:** another Vite dev server is running on your
+  machine. Stop it, then `docker compose up -d`.
+- **App does not start:** check `docker compose logs setup`. The other services
+  only start after it finishes successfully.
+- **Page loads without styling:** the `vite` container serves the front-end assets.
+  Check that it is running with `docker compose ps`.
 
 ## Services (docker-compose)
 
