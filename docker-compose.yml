@@ -1,65 +1,82 @@
 # JPBook local stack — fully stateless app (state lives in Postgres/Redis/Meilisearch).
 #
-#   docker compose build           build the app image
-#   docker compose up -d           start the whole stack
-#   docker compose exec app bash   shell into the app container
+#   docker compose up -d --build   build, set up and start everything
+#                                  → http://localhost:8089 (override with APP_PORT)
 #
+# The one-shot `setup` service runs on every `up`: it creates .env, installs
+# composer/npm dependencies, generates APP_KEY and runs migrations. The app,
+# queue worker and Vite only start once it has finished successfully.
+#
+# Only the ports the browser needs are published (app + Vite), so the stack
+# does not clash with a Postgres/Redis already running on the host. Reach the
+# data services with e.g. `docker compose exec pgsql psql -U jpbook jpbook`.
 name: jpbook
 
+# Shared by every service that runs the Laravel codebase (the image itself is
+# built once, by `app`). No `env_file`: Laravel reads the bind-mounted
+# /app/.env itself, so the .env that `setup` creates on a fresh clone is
+# picked up without re-running compose.
+x-app: &app
+  image: jpbook-app
+  pull_policy: never   # local image, never on a registry
+  restart: unless-stopped
+  volumes:
+    - .:/app
+
 services:
-  # --- Application (Laravel Octane / FrankenPHP) ------------------------------
-  app:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-    image: jpbook-app
-    restart: unless-stopped
-    command: php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8000 --workers=auto --max-requests=500 --watch
-    ports:
-      - "8088:8000"
-    volumes:
-      - .:/app
-    env_file: .env
+  # --- One-shot bootstrap (see docker/setup.sh) -------------------------------
+  setup:
+    <<: *app
+    restart: "no"
+    command: bash docker/setup.sh
+    healthcheck:
+      disable: true
     depends_on:
       pgsql:
         condition: service_healthy
       pgsql-replica:
-        condition: service_started
+        condition: service_healthy
       redis:
         condition: service_healthy
+
+  # --- Application (Laravel Octane / FrankenPHP) ------------------------------
+  app:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: php artisan octane:start --server=frankenphp --host=0.0.0.0 --port=8000 --workers=auto --max-requests=500 --watch
+    ports:
+      - "${APP_PORT:-8089}:8000"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
       meilisearch:
         condition: service_healthy
 
   # --- Queue worker (Horizon) -------------------------------------------------
   horizon:
-    image: jpbook-app
-    restart: unless-stopped
+    <<: *app
     command: php artisan horizon
     # This container runs the queue worker, not the web server, so the
     # FrankenPHP image's inherited healthcheck does not apply.
     healthcheck:
       disable: true
-    volumes:
-      - .:/app
-    env_file: .env
     depends_on:
-      app:
-        condition: service_started
-      redis:
-        condition: service_healthy
+      setup:
+        condition: service_completed_successfully
 
   # --- Vite dev server (HMR for Inertia/Vue) ----------------------------------
   vite:
-    image: jpbook-app
-    restart: unless-stopped
+    <<: *app
     command: npm run dev -- --host 0.0.0.0
     healthcheck:
       disable: true
     ports:
       - "5173:5173"
-    volumes:
-      - .:/app
-    env_file: .env
+    depends_on:
+      setup:
+        condition: service_completed_successfully
 
   # --- Postgres PRIMARY (writes) ----------------------------------------------
   pgsql:
@@ -79,8 +96,6 @@ services:
     volumes:
       - pgsql-data:/var/lib/postgresql/data
       - ./docker/postgres/primary-init.sh:/docker-entrypoint-initdb.d/10-primary-init.sh:ro
-    ports:
-      - "5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-jpbook} -d ${DB_DATABASE:-jpbook}"]
       interval: 5s
@@ -100,10 +115,15 @@ services:
     volumes:
       - pgsql-replica-data:/var/lib/postgresql/data
       - ./docker/postgres/replica-entrypoint.sh:/usr/local/bin/replica-entrypoint.sh:ro
-    # No host port: the app reaches the replica internally as pgsql-replica:5432.
     depends_on:
       pgsql:
         condition: service_healthy
+    # Ready once pg_basebackup is done and the hot standby accepts reads.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${DB_USERNAME:-jpbook}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   # --- Redis (cache / session / queue) ----------------------------------------
   redis:
@@ -112,8 +132,6 @@ services:
     command: redis-server --appendonly yes
     volumes:
       - redis-data:/data
-    ports:
-      - "6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -130,8 +148,6 @@ services:
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili-data:/meili_data
-    ports:
-      - "7700:7700"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:7700/health"]
       interval: 5s

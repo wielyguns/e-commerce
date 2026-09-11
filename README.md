@@ -20,47 +20,40 @@ live in Redis; search lives in Meilisearch; data in Postgres.
 ## Quick start
 
 ```bash
-# 1. Environment file (already present, but for a fresh clone):
-cp .env.example .env
-
-# 2. Build the application image (FrankenPHP + PHP 8.3 + Node)
-docker compose build
-
-# 3. Install dependencies (first run only)
-docker compose run --rm --no-deps app composer install
-docker compose run --rm --no-deps app npm install
-
-# 4. Start the full stack
-docker compose up -d
-
-# 5. App key + migrations (first run only)
-docker compose exec app php artisan key:generate
-docker compose exec app php artisan migrate
+docker compose up -d --build
 ```
+
+That's it — also on a fresh clone. The one-shot `setup` service (`docker/setup.sh`)
+runs on every `up`: it creates `.env` from `.env.example`, runs `composer install` /
+`npm ci`, generates `APP_KEY` and applies migrations. The app, queue worker and Vite
+start only after it succeeds (first run takes a few minutes for dependencies).
 
 Then open:
 
 | URL                              | What                                   |
 | -------------------------------- | -------------------------------------- |
-| http://localhost:8088            | Storefront (Inertia/Vue)               |
-| http://localhost:8088/admin      | Admin panel (role-protected in Phase E)|
-| http://localhost:8088/horizon    | Horizon queue dashboard                |
-| http://localhost:7700            | Meilisearch                            |
+| http://localhost:8089            | Storefront (Inertia/Vue)               |
+| http://localhost:8089/admin      | Admin panel (role-protected in Phase E)|
+| http://localhost:8089/horizon    | Horizon queue dashboard                |
 
-> Host ports 8000/8080/5433 were already taken on this machine, so the app is
-> published on **8088** (see `docker-compose.yml`).
+> Port taken? Set `APP_PORT` in `.env` (`APP_URL` follows it) and run
+> `docker compose up -d` again.
 
 ## Services (docker-compose)
 
 | Service         | Role                          | Host port |
 | --------------- | ----------------------------- | --------- |
-| `app`           | Octane / FrankenPHP web server| 8088→8000 |
+| `setup`         | One-shot bootstrap, then exits| —         |
+| `app`           | Octane / FrankenPHP web server| 8089→8000 |
 | `horizon`       | Queue worker (Redis)          | —         |
 | `vite`          | Vite dev server (HMR)         | 5173      |
-| `pgsql`         | Postgres **primary** (writes) | 5432      |
+| `pgsql`         | Postgres **primary** (writes) | internal  |
 | `pgsql-replica` | Postgres **replica** (reads)  | internal  |
-| `redis`         | Cache · session · queue       | 6379      |
-| `meilisearch`   | Product search                | 7700      |
+| `redis`         | Cache · session · queue       | internal  |
+| `meilisearch`   | Product search                | internal  |
+
+Only the ports the browser needs are published, so the stack never clashes with a
+Postgres/Redis already running on the host.
 
 ## Architecture notes
 
@@ -81,6 +74,8 @@ Then open:
 docker compose logs -f app          # tail Octane logs
 docker compose exec app bash        # shell into the app container
 docker compose exec app php artisan ...   # any artisan command
+docker compose exec pgsql psql -U jpbook jpbook   # Postgres shell
+docker compose logs setup           # see what the bootstrap did
 docker compose restart app          # reload after config changes
 docker compose down                 # stop (keeps data volumes)
 ```
